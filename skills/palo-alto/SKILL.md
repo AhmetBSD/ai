@@ -119,7 +119,7 @@ Müşteri "198.51.100.99'un 80 portu ..." dediğinde skill ŞU sırayla kontrol 
 ## Mimari Kararlar
 
 1. **Credential persistence YOK** — env var üzerinden geçer, process exit'te kaybolur. Şifre asla diske yazılmaz.
-2. **pan-os-python SDK** — Ansible CLI yerine direkt Python kütüphanesi. Idempotency, conflict detection ve transaction kontrolü güvenilir.
+2. **pan-os-python SDK** — direkt Python kütüphanesi. Idempotency, conflict detection ve transaction kontrolü güvenilir.
 3. **TLS** — `PANOS_INSECURE=1` ile self-signed cert kabul edilir (firewall mgmt cert'leri genelde self-signed olduğu için müşteri-dostu). `PANOS_CA_BUNDLE` ile pinned cert mümkün. Default behavior PAN-OS gerçekliğine uygundur.
 4. **Tek müşteri tek firewall** — `customer_id` veya profile dosyası yok. Müşteri kendi Claude'unu kurar, kendi firewall'una bağlanır.
 5. **Direct apply + commit** — başarısızlıkta PAN-OS candidate'ı otomatik geri alır.
@@ -137,9 +137,8 @@ Müşteri "198.51.100.99'un 80 portu ..." dediğinde skill ŞU sırayla kontrol 
 | `scripts/dnat.py` | DNAT entry point |
 | `scripts/restrict_source.py` | Source IP kısıtlama entry point |
 | `scripts/free_ip.py` | Boş IP/port önizleme (read-only) |
-| `playbooks/*.yml` | (Legacy) operatör için Ansible playbook'ları |
-| `references/panos-modules.md` | Ansible modül referansı (operatör) |
-| `references/xml-api-cheatsheet.md` | XML API debug komutları |
+| `scripts/update.sh` | Auto-update — her çağrı öncesi 24h cache'li git pull |
+| `references/xml-api-cheatsheet.md` | XML API debug komutları (manuel teşhis) |
 | `references/troubleshooting.md` | Sık karşılaşılan sorunlar |
 
 ## Env Var Referansı

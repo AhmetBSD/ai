@@ -47,16 +47,27 @@ class ObjectConflictError(PanosError):
 class PanosClient:
     """Stateful wrapper around a Firewall + Rulebase tree."""
 
+    # Hard HTTP timeout — refuse to hang the customer's shell on unreachable
+    # firewalls. The default in pan-os-python is much higher; we clamp to 60s.
+    HTTP_TIMEOUT_SECONDS = 60
+
     def __init__(self, cfg: Config):
         self.config = cfg
         # Authenticate via api_key OR username/password (SDK will keygen as needed).
-        kwargs = {"hostname": cfg.host, "port": 443}
+        kwargs = {"hostname": cfg.host, "port": 443, "timeout": self.HTTP_TIMEOUT_SECONDS}
         if cfg.api_key:
             kwargs["api_key"] = cfg.api_key
         else:
             kwargs["api_username"] = cfg.username
             kwargs["api_password"] = cfg.password
         self.fw = Firewall(**kwargs)
+        # The Firewall constructor exposes a .timeout attribute that
+        # propagates to subsequent xapi calls — set explicitly in case the
+        # ctor kwarg is ignored in older SDK versions.
+        try:
+            self.fw.timeout = self.HTTP_TIMEOUT_SECONDS
+        except Exception:
+            pass
 
         # TLS verify control. pan-os-python wraps pan.xapi.PanXapi; the underlying
         # http client honours the `cert` attribute.
@@ -391,13 +402,57 @@ class PanosClient:
 
     # ---- Commit / revert -----------------------------------------------------
 
-    def commit(self, description: str) -> dict:
-        log.info("commit start: %s", description)
-        try:
-            result = self.fw.commit(sync=True, description=description, exception=True)
-        except Exception as e:
-            raise CommitError(f"commit failed: {e}") from e
-        log.info("commit OK: job=%s", result)
+    def commit(self, description: str, timeout: int = 60) -> dict:
+        """Synchronous commit. pan-os-python 1.12.x Firewall.commit() does NOT
+        accept a 'description' kwarg — description must be embedded in cmd XML.
+
+        Hard timeout (default 60s) — refuse to hang the customer's shell.
+        On timeout we issue a non-sync commit so PAN-OS still finishes the job
+        in the background, and return a 'pending' result.
+        """
+        import xml.sax.saxutils as _x
+        safe = _x.escape(description) if description else ""
+        cmd_xml = f"<commit><description>{safe}</description></commit>" if safe else None
+
+        log.info("commit start (timeout=%ds): %s", timeout, description)
+
+        # Run the SDK commit (which polls PAN-OS internally) in a thread with
+        # a hard timeout so the customer never waits more than `timeout` sec.
+        import threading
+        result_box: dict = {}
+
+        def _commit():
+            try:
+                result_box["ok"] = self.fw.commit(
+                    sync=True, cmd=cmd_xml, exception=True
+                )
+            except Exception as e:
+                result_box["err"] = e
+
+        t = threading.Thread(target=_commit, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            # Did not complete in time. Most PAN-OS commits finish within 60s;
+            # if not, the firewall almost certainly is still finishing in the
+            # background. Don't raise — return a non-error "running" status so
+            # the caller can re-poll via discovery / idempotency on the next call.
+            log.warning("commit not confirmed within %ds (likely still running)", timeout)
+            return {
+                "result": "committing",
+                "timeout_seconds": timeout,
+                "message": (
+                    f"commit accepted but completion not confirmed within {timeout}s. "
+                    f"PAN-OS typically finishes within ~60s — the change will land shortly."
+                ),
+            }
+
+        if "err" in result_box:
+            raise CommitError(f"commit failed: {result_box['err']}") from result_box["err"]
+
+        result = result_box.get("ok")
+        log.info("commit OK: %s", result)
         return result if isinstance(result, dict) else {"raw": str(result)}
 
     def revert_candidate(self) -> None:

@@ -68,6 +68,45 @@ def do_dnat(args: argparse.Namespace) -> dict:
     client = PanosClient(cfg)
     client.refresh()
 
+    # Idempotency early-exit. If a NAT rule with the predicted name already
+    # matches the requested parameters EXACTLY, treat the request as
+    # already-applied and return success. This prevents discovery from
+    # reporting a port_conflict against the rule we ourselves would create.
+    if args.wan_ip:
+        predicted_name = cfg.naming.nat_rule(args.wan_ip)
+        existing = client.get_nat_rule(predicted_name)
+        if existing is not None:
+            wan_addr_name = cfg.naming.wan_address(args.wan_ip)
+            service_name = cfg.naming.service(args.public_port, args.protocol)
+            lan_addr_name = cfg.naming.lan_address(args.target_ip)
+            from panos_client import _diff_nat_rule
+            diff = _diff_nat_rule(
+                existing,
+                wan_address_name=wan_addr_name,
+                service_name=service_name,
+                translated_address_name=lan_addr_name,
+                translated_port=args.target_port,
+                from_zones=[cfg.wan_zone],
+                to_zone=cfg.wan_zone,
+                to_interface=cfg.wan_interface,
+            )
+            if diff is None:
+                return {
+                    "host": cfg.host,
+                    "wan_ip": args.wan_ip,
+                    "wan_address_object": wan_addr_name,
+                    "target_ip": args.target_ip,
+                    "target_address_object": lan_addr_name,
+                    "service_object": service_name,
+                    "protocol": args.protocol,
+                    "public_port": args.public_port,
+                    "target_port": args.target_port,
+                    "nat_rule": predicted_name,
+                    "security_rule": cfg.naming.security_rule(args.wan_ip),
+                    "selection_reason": "already-applied",
+                    "status": "no-change",
+                }
+
     candidate = find_dnat_wan_candidate(
         client,
         requested_port=args.public_port,
@@ -171,8 +210,12 @@ def do_dnat(args: argparse.Namespace) -> dict:
     except CommitError:
         raise
 
-    plan["status"] = "applied"
-    plan["commit_job"] = commit_result.get("jobid") if isinstance(commit_result, dict) else None
+    if isinstance(commit_result, dict) and commit_result.get("result") == "committing":
+        plan["status"] = "committing"
+        plan["commit_note"] = commit_result.get("message")
+    else:
+        plan["status"] = "applied"
+        plan["commit_job"] = commit_result.get("jobid") if isinstance(commit_result, dict) else None
     return plan
 
 
@@ -196,13 +239,18 @@ def do_remove(args: argparse.Namespace) -> dict:
     if args.dry_run:
         return {"status": "would-remove", "nat": target, "security": sec_name if sec_deleted else None}
     commit_result = client.commit(description=f"remove dnat {target}")
-    return {
+    out = {
         "host": cfg.host,
-        "status": "removed",
         "nat_rule": target,
         "security_rule": sec_name if sec_deleted else None,
-        "commit_job": commit_result.get("jobid") if isinstance(commit_result, dict) else None,
     }
+    if isinstance(commit_result, dict) and commit_result.get("result") == "committing":
+        out["status"] = "removing"
+        out["commit_note"] = commit_result.get("message")
+    else:
+        out["status"] = "removed"
+        out["commit_job"] = commit_result.get("jobid") if isinstance(commit_result, dict) else None
+    return out
 
 
 def main(argv: Optional[list] = None) -> int:

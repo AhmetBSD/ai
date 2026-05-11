@@ -162,7 +162,6 @@ bash ~/.claude/skills/palo-alto/scripts/update.sh --force
 ## 8. More Information
 
 - All script options and architecture: `~/.claude/skills/palo-alto/SKILL.md`
-- Operator-level Ansible playbooks: `~/.claude/skills/palo-alto/playbooks/`
 - Troubleshooting reference: `~/.claude/skills/palo-alto/references/troubleshooting.md`
 - XML API cheat-sheet: `~/.claude/skills/palo-alto/references/xml-api-cheatsheet.md`
 
