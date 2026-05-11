@@ -90,40 +90,88 @@ class ConfigError(Exception):
     pass
 
 
-def _env(key: str, default: Optional[str] = None) -> Optional[str]:
+SESSION_FILE = os.path.expanduser("~/.palo-alto/session.env")
+
+
+def _load_session_file() -> dict:
+    """Read ~/.palo-alto/session.env (written by auth.py) into a dict.
+    Returns {} when the file does not exist. Refuses to load files that
+    are readable by anyone other than the owner.
+    """
+    if not os.path.exists(SESSION_FILE):
+        return {}
+    st = os.stat(SESSION_FILE)
+    # group/other readable is a security failure — refuse so the user fixes it
+    if st.st_mode & 0o077:
+        raise ConfigError(
+            f"{SESSION_FILE} dosya izni çok açık ({oct(st.st_mode & 0o777)}). "
+            f"`chmod 600 {SESSION_FILE}` yap."
+        )
+    out: dict = {}
+    with open(SESSION_FILE, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            out[k.strip()] = v.strip().strip("'\"")
+    return out
+
+
+_SESSION_CACHE: dict | None = None
+
+
+def _get(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Look up a config value in env vars first, then in the session file."""
     v = os.environ.get(key)
-    return v if (v is not None and v != "") else default
+    if v is not None and v != "":
+        return v
+    global _SESSION_CACHE
+    if _SESSION_CACHE is None:
+        _SESSION_CACHE = _load_session_file()
+    v = _SESSION_CACHE.get(key)
+    return v if v is not None and v != "" else default
+
+
+# Backwards-compatible alias — older code/tests may import _env.
+_env = _get
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
-    v = os.environ.get(key, "")
-    return v.lower() in ("1", "true", "yes", "on")
+    v = _get(key, "")
+    return (v or "").lower() in ("1", "true", "yes", "on")
 
 
 def load_config() -> Config:
-    host = _env("PANOS_HOST")
+    host = _get("PANOS_HOST")
     if not host:
         raise ConfigError(
-            "PANOS_HOST not set. Customer should provide firewall mgmt IP or FQDN."
+            "PANOS_HOST not set. Çözüm: `python3 auth.py` ile giriş yap "
+            "(host/kullanıcı/şifre soracak), session dosyası oluşur, "
+            "tüm sonraki komutlar otomatik kullanır."
         )
 
-    api_key = _env("PANOS_API_KEY")
-    username = _env("PANOS_USERNAME")
-    password = _env("PANOS_PASSWORD")
+    api_key = _get("PANOS_API_KEY")
+    username = _get("PANOS_USERNAME")
+    password = _get("PANOS_PASSWORD")
     if not api_key and not (username and password):
         raise ConfigError(
-            "No credentials. Set PANOS_API_KEY or both PANOS_USERNAME and PANOS_PASSWORD."
+            "Kimlik bilgisi yok. `python3 auth.py` çalıştır, host/kullanıcı/"
+            "şifre gir; skill API key alır ve session dosyasına koyar."
         )
 
     insecure = _env_bool("PANOS_INSECURE")
-    ca_bundle = _env("PANOS_CA_BUNDLE")
+    ca_bundle = _get("PANOS_CA_BUNDLE")
     if ca_bundle and not os.path.exists(ca_bundle):
         raise ConfigError(f"PANOS_CA_BUNDLE not found: {ca_bundle}")
 
+    wan_subnet_s = _get("PANOS_WAN_SUBNET")
     wan_subnet = None
-    if _env("PANOS_WAN_SUBNET"):
+    if wan_subnet_s:
         try:
-            wan_subnet = ipaddress.IPv4Network(os.environ["PANOS_WAN_SUBNET"], strict=False)
+            wan_subnet = ipaddress.IPv4Network(wan_subnet_s, strict=False)
         except ValueError as e:
             raise ConfigError(f"Invalid PANOS_WAN_SUBNET: {e}")
 
