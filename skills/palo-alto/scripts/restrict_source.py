@@ -22,7 +22,7 @@ from typing import Optional
 
 from config import load_config, ConfigError
 from panos_client import (
-    PanosClient, PanosError, CommitError, ObjectConflictError,
+    PanosClient, PanosError, CommitError, ObjectConflictError, NotOwnedError,
 )
 
 
@@ -270,6 +270,10 @@ def main(argv: Optional[list] = None) -> int:
     except ConfigError as e:
         _emit({"status": "error", "kind": "config", "error": str(e)})
         return 2
+    except NotOwnedError as e:
+        _emit({"status": "error", "kind": "not_owned",
+               "error": str(e), "object_kind": e.kind, "object_name": e.name, "action": e.action})
+        return 1
     except ObjectConflictError as e:
         _emit({"status": "error", "kind": "object_conflict", "error": str(e)})
         return 1

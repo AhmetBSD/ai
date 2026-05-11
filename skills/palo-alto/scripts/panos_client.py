@@ -63,6 +63,33 @@ class ObjectConflictError(PanosError):
     """Same name, different attributes — explicit human decision required."""
 
 
+class NotOwnedError(PanosError):
+    """Attempt to modify/delete an object that the skill did not create.
+
+    The skill only writes to objects whose description carries the
+    [skill-managed] marker. Operator-created rules and objects are
+    strictly read-only from the skill's perspective.
+    """
+    def __init__(self, kind: str, name: str, action: str):
+        self.kind = kind
+        self.name = name
+        self.action = action
+        super().__init__(
+            f"{kind} {name!r} skill tarafından yaratılmadı "
+            f"(description'da [skill-managed] marker'ı yok). "
+            f"Skill yalnızca kendi yarattığı objelere {action} yapabilir. "
+            f"Reddedildi."
+        )
+
+
+def _assert_owned(obj, action: str) -> None:
+    """Raise NotOwnedError unless `obj.description` carries the skill marker."""
+    if not _is_skill_managed(obj):
+        kind = obj.__class__.__name__
+        name = getattr(obj, "name", "<unknown>")
+        raise NotOwnedError(kind, name, action)
+
+
 class PanosClient:
     """Stateful wrapper around a Firewall + Rulebase tree."""
 
@@ -317,8 +344,18 @@ class PanosClient:
         existing = self.get_nat_rule(name)
         if not existing:
             return False
+        _assert_owned(existing, "silme")
         existing.delete()
         log.info("deleted NAT rule %s", name)
+        return True
+
+    def delete_security_rule(self, name: str) -> bool:
+        existing = self.get_security_rule(name)
+        if not existing:
+            return False
+        _assert_owned(existing, "silme")
+        existing.delete()
+        log.info("deleted security rule %s", name)
         return True
 
     # ---- Security rules ------------------------------------------------------
@@ -416,9 +453,32 @@ class PanosClient:
         rule: SecurityRule,
         new_source: Iterable[str],
     ) -> None:
+        _assert_owned(rule, "source güncelleme")
         rule.source = list(new_source)
         rule.apply()
         log.info("updated security rule %s source -> %s", rule.name, list(new_source))
+
+    def update_nat_rule_destination(
+        self,
+        rule: NatRule,
+        translated_address_name: str,
+        translated_port: int,
+    ) -> None:
+        """Update only the inside destination (translated_address + port).
+
+        This is the ONE write-side exception to the hard-isolation rule:
+        the operator can ask the skill to repoint an existing DNAT to a
+        different inside server/port. The rule's identity (name, WAN side,
+        zones, source filters, service) stays untouched. Other destructive
+        operations against operator-owned rules remain forbidden.
+        """
+        rule.destination_translated_address = translated_address_name
+        rule.destination_translated_port = translated_port
+        rule.apply()
+        log.info(
+            "updated NAT rule %s destination -> %s:%d",
+            rule.name, translated_address_name, translated_port,
+        )
 
     # ---- Orphan / GC ---------------------------------------------------------
 
