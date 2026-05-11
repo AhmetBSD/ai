@@ -182,7 +182,88 @@ bash ~/.claude/skills/palo-alto/scripts/update.sh --force
 
 ---
 
-## 8. More Information
+## 8. Operator Hardening — Least-Privilege Service Account
+
+In production you should not authenticate the skill with a full `admin` account. PAN-OS gives you three patterns; pick whichever fits your environment. The **skill code is identical in all three** — the only thing that changes is what kind of credentials end up in the env vars.
+
+### Pattern A — Local PA admin user with custom role (simplest, no AD)
+
+PAN-OS Web UI:
+
+1. **Device → Admin Roles → Add**
+   - Name: `skill-dnat-operator`
+   - Web UI tab: turn **everything off**
+   - XML API tab: enable `Configuration`, `Operational Requests`, `Commit`. Leave Export/Import/Log/Report/UserID off.
+   - CLI: `None`
+   - (Optional, PAN-OS 10.1+) XPath restriction: limit config write to
+     `/config/devices/entry/vsys/entry/{address,service,address-group,rulebase/nat,rulebase/security}`
+2. **Device → Administrators → Add**
+   - Name: `skill-svc`
+   - Authentication: Password (local), set a strong password
+   - Administrator Type: Role Based
+   - Profile: `skill-dnat-operator`
+3. Commit
+
+Then on the customer's machine:
+```bash
+export PANOS_USERNAME=skill-svc
+export PANOS_PASSWORD='...'
+export PANOS_INSECURE=1
+```
+
+### Pattern B — AD-backed admin user (LDAP auth profile)
+
+Use this if you already have an LDAP authentication profile pointing at Active Directory (`Domain Users` is the convention). The PA admin user shares its name with an AD user; the actual password lives in AD only.
+
+1. Create the role profile exactly as in **Pattern A step 1**.
+2. **Device → Administrators → Add**
+   - Name: e.g. `john.doe` (must equal the AD `sAMAccountName`)
+   - Authentication Profile: pick your LDAP/AD profile (e.g. `Domain Users`)
+   - Administrator Type: Role Based, Profile: `skill-dnat-operator`
+3. Make sure the AD account is in the group your LDAP profile's `allow-list` accepts.
+4. Commit.
+
+Customer-side env vars are the same as Pattern A — the username matches AD, the password is the AD password. PA does the LDAP bind transparently.
+
+### Pattern C — Short-lived API key (any pattern + key rotation)
+
+Layer on top of Pattern A or B. PA CLI:
+
+```
+configure
+set deviceconfig setting management api-key-lifetime 60
+commit
+```
+
+`api-key-lifetime` is in **minutes** (`60` = 1 hour; `0` disables expiry). Each generated key is valid for that window only.
+
+Workflow:
+
+```bash
+# Once per session — generate a fresh key with username + password.
+export PANOS_HOST=fw.example.com
+export PANOS_USERNAME=skill-svc
+export PANOS_PASSWORD='...'
+export PANOS_INSECURE=1
+~/.palo-alto/venv/bin/python ~/.claude/skills/palo-alto/scripts/dnat.py --keygen
+# → prints JSON with "api_key": "LUFRPT..."
+
+# Then drop the password, use the short-lived key for the rest of the session:
+unset PANOS_PASSWORD
+export PANOS_API_KEY='LUFRPT...'
+
+# Subsequent skill calls in the same shell use only the api key.
+```
+
+The skill always prefers `PANOS_API_KEY` over username+password when both are set. When the key expires the next call returns `kind: auth` — re-run `--keygen` and replace it.
+
+### (Optional) Lock the admin user down by source IP
+
+**Device → Setup → Management → Permitted IP Addresses**: allow only the customer's workstation IP. Combined with one of the patterns above this means the service account is unusable from anywhere else.
+
+---
+
+## 9. More Information
 
 - All script options and architecture: `~/.claude/skills/palo-alto/SKILL.md`
 - Troubleshooting reference: `~/.claude/skills/palo-alto/references/troubleshooting.md`

@@ -189,8 +189,8 @@ Operatör kuralında çalıştığında skill yeni target address objesini `[ski
 3. **TLS** — `PANOS_INSECURE=1` ile self-signed cert kabul edilir (firewall mgmt cert'leri genelde self-signed olduğu için müşteri-dostu). `PANOS_CA_BUNDLE` ile pinned cert mümkün. Default behavior PAN-OS gerçekliğine uygundur.
 4. **Tek müşteri tek firewall** — `customer_id` veya profile dosyası yok. Müşteri kendi Claude'unu kurar, kendi firewall'una bağlanır.
 5. **Direct apply + commit** — başarısızlıkta PAN-OS candidate'ı otomatik geri alır.
-6. **Naming convention Otoplan paterni** — WAN_IF108, SERVER_50, SVC_80_TCP, RULE108, RULE_108. Override `PANOS_*` env var'ları ile mümkün (zone/interface).
-7. **Default security profile** — yeni security rule'a `virus=default, spyware=strict, vulnerability=strict, wildfire-analysis=default` uygulanır (Otoplan default'u).
+6. **Naming convention** — WAN_IF108, SERVER_50, SVC_80_TCP, RULE108, RULE_108. Standart PA naming pattern. Override `PANOS_*` env var'ları ile mümkün (zone/interface).
+7. **Default security profile** — yeni security rule'a `virus=default, spyware=strict, vulnerability=strict, wildfire-analysis=default` uygulanır (yaygın güvenlik baseline).
 8. **`[skill-managed]` marker'ı** — yaratılan her address/service/group/NAT/security objesinin `description` alanına eklenir. `--remove`'un otomatik orphan cleanup'ı sadece bu marker'ı taşıyan + zero-reference objeleri siler; operatörün elle yarattığı her şey korunur.
 
 ## Dosya İndeksi

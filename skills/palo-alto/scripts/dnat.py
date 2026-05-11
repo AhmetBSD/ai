@@ -397,13 +397,40 @@ def main(argv: Optional[list] = None) -> int:
                              "— only the destination changes; everything else stays.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print plan, do not change firewall")
+    parser.add_argument("--keygen", action="store_true",
+                        help="Generate a fresh PAN-OS API key from username+password "
+                             "and print it. Use when api-key-lifetime is short and you "
+                             "want a single short-lived key per Claude session.")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
-    if sum(1 for x in [args.remove, args.update] if x) > 1:
-        parser.error("--remove and --update are mutually exclusive")
+    if sum(1 for x in [args.remove, args.update, args.keygen] if x) > 1:
+        parser.error("--remove, --update, --keygen are mutually exclusive")
 
     _setup_logging(args.verbose)
+
+    if args.keygen:
+        try:
+            cfg = load_config()
+        except ConfigError as e:
+            _emit({"status": "error", "kind": "config", "error": str(e)})
+            return 2
+        if not (cfg.username and cfg.password):
+            _emit({"status": "error", "kind": "config",
+                   "error": "--keygen needs PANOS_USERNAME and PANOS_PASSWORD env vars"})
+            return 2
+        client = PanosClient(cfg)
+        try:
+            # Force a real auth round-trip: pan-os-python lazy-fetches the key on
+            # the first XML API request. A cheap op call (`<show><clock>`) does it.
+            client.fw.op("<show><clock/></show>", cmd_xml=False)
+            api_key = client.fw.api_key
+        except Exception as e:
+            _emit({"status": "error", "kind": "auth", "error": str(e)})
+            return 1
+        _emit({"status": "ok", "host": cfg.host, "api_key": api_key,
+               "hint": "export PANOS_API_KEY='<api_key>' to use it for subsequent calls"})
+        return 0
 
     if args.remove:
         try:
