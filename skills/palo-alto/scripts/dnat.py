@@ -21,7 +21,7 @@ from typing import Optional
 from config import load_config, ConfigError
 from discovery import (
     find_dnat_wan_candidate,
-    WanSubnetMismatch, WanIpIsFirewallInterface, PortConflict,
+    WanSubnetMismatch, PortConflict,
 )
 from panos_client import (
     PanosClient, PanosError, CommitError, ObjectConflictError,
@@ -304,9 +304,6 @@ def main(argv: Optional[list] = None) -> int:
             "error": str(e),
             "given_ip": e.ip, "wan_subnet": str(e.subnet),
         })
-        return 1
-    except WanIpIsFirewallInterface as e:
-        _emit({"status": "error", "kind": "wan_ip_is_firewall", "error": str(e), "given_ip": e.ip})
         return 1
     except PortConflict as e:
         _emit({

@@ -125,7 +125,6 @@ Tüm script'ler stdout'a JSON döner. Hata yoksa `"status": "applied"`, hata var
 |--------|-------|---------------------------|
 | `config` | Env var eksik | "Firewall bilgilerini tekrar verir misin? (host, kullanıcı, şifre)" |
 | `wan_subnet_mismatch` | Müşteri WAN subnet'i dışı IP verdi | JSON'daki `wan_subnet` field'ını kullan: "Verdiğin IP firewall'unun WAN subnet'i (X) içinde değil. Lütfen o aralıktan bir IP seç." |
-| `wan_ip_is_firewall` | Firewall'un kendi WAN IP'si | "Bu IP firewall'un kendi mgmt/WAN interface IP'si, üzerine DNAT yapılamaz." |
 | `port_conflict` | İstenen port o IP'de zaten kullanımda | JSON'daki `conflicting_rules` listesini göster: "Bu port o IP'de zaten kullanılıyor (kural: ...). Farklı bir IP veya port seç." |
 | `object_conflict` | Aynı isimde farklı parametreli kural mevcut | Farkı göster, manuel rename öner |
 | `commit` | Commit hatası | Firewall'un dönen mesajını göster (validation hatası vb.) |
@@ -137,12 +136,12 @@ Müşteri "198.51.100.99'un 80 portu ..." dediğinde skill ŞU sırayla kontrol 
 
 1. **IP formatı geçerli mi?** Değilse → reddedilir.
 2. **IP firewall'un WAN subnet'inde mi?** `198.51.100.96/28` dışında bir IP verdiyse (örnek: 1.2.3.4) → `wan_subnet_mismatch` hatası.
-3. **Bu IP firewall'un kendi WAN interface IP'si mi?** (örnek: 198.51.100.98) → `wan_ip_is_firewall` hatası.
-4. **Bu IP'de istenen port/range zaten başka NAT rule'da kullanılıyor mu?** Evet ise → `port_conflict` hatası + çakışan rule isimleri.
+3. **Bu IP'de istenen port/range zaten başka NAT rule'da kullanılıyor mu?** Evet ise → `port_conflict` hatası + çakışan rule isimleri.
    - Service-group'ları açar; `PORT_7081_TCP` veya `7000-7010` range'i de tetikler.
    - `service=any` kuralı varsa o IP'nin TÜM portları tutuluyor sayılır.
-5. **Aynı isimde NAT/security rule farklı parametre ile var mı?** Evet ise → `object_conflict` (üzerine YAZILMAZ).
-6. **Aynı isimde, aynı parametre ile var mı?** → No-op (idempotent, tekrar çalıştırma güvenli).
+   - Firewall'un kendi WAN IP'si de DNAT için geçerli hedef sayılır (tek-public-IP'li kurumlar için yaygın). Sadece port çakışması varsa engellenir.
+4. **Aynı isimde NAT/security rule farklı parametre ile var mı?** Evet ise → `object_conflict` (üzerine YAZILMAZ).
+5. **Aynı isimde, aynı parametre ile var mı?** → No-op (idempotent, tekrar çalıştırma güvenli).
 
 ## Mimari Kararlar
 

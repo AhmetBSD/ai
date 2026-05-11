@@ -58,8 +58,7 @@ Within the same conversation you don't need to repeat the credentials. Just say 
 
 The skill will:
 - Verify `198.51.100.108` is inside your firewall's WAN subnet
-- Verify it's not the firewall's own interface IP
-- **Reject** if TCP/80 is already used by another NAT rule on that IP — and tell you which rule
+- **Reject** if TCP/80 is already used by another NAT rule on that IP — and tell you which rule (the firewall's own WAN IP is accepted as a target; only port collisions are blocked)
 - Otherwise: create address objects `WAN_IF108`, `SERVER_50`, service object `SVC_80_TCP` (if missing)
 - Create NAT rule `RULE108` and matching security rule `RULE_108`
 - Commit
@@ -111,7 +110,6 @@ The skill refuses the operation (and tells you why) in these cases:
 | Situation | What the skill says |
 |-----------|---------------------|
 | IP is outside the WAN subnet (e.g. `8.8.8.8`) | "This IP is not in your firewall's WAN subnet (`198.51.100.96/28`). Pick one in that range." |
-| IP is the firewall's own interface IP (e.g. `.98`) | "This is the firewall's own WAN interface IP — DNAT cannot land on it." |
 | Requested port already in use on that IP | "TCP/80 is already used on 198.51.100.99. Conflicting rule: RULE99. Pick a different IP or port." |
 | Service-group or port-range conflict | "Port 7081 is already taken by the PORT_7081-7082 range." |
 | A `service=any` or `application-default` rule exists | "A service=any rule on this IP consumes every port." |

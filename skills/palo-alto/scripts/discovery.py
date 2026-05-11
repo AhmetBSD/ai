@@ -52,15 +52,6 @@ class WanSubnetMismatch(RuntimeError):
         )
 
 
-class WanIpIsFirewallInterface(RuntimeError):
-    def __init__(self, ip: str):
-        self.ip = ip
-        super().__init__(
-            f"{ip} firewall'un kendi WAN interface IP'si. "
-            f"Bu adres üzerinden DNAT yapılamaz."
-        )
-
-
 class PortConflict(RuntimeError):
     """Raised when requested (ip, port, proto) is already consumed."""
 
@@ -262,9 +253,12 @@ def find_dnat_wan_candidate(
 
     Raises:
       WanSubnetMismatch: explicit_wan_ip is outside the WAN subnet.
-      WanIpIsFirewallInterface: explicit_wan_ip is the firewall's own WAN IP.
       PortConflict: the (ip, proto, port) tuple is already consumed.
       RuntimeError: no candidate available in the subnet.
+
+    Note: the firewall's own WAN interface IP is allowed as an explicit DNAT
+    target (single-IP deployments are common). It is still de-prioritised by
+    auto-pick because it almost always has services bound (GP, SSL-VPN, etc.).
     """
     subnet = get_wan_subnet(client)
     own_ip = _firewall_own_wan_ip(client, subnet)
@@ -290,8 +284,9 @@ def find_dnat_wan_candidate(
             raise RuntimeError(f"{ip!r} geçerli bir IPv4 adresi değil")
         if ip_addr not in subnet:
             raise WanSubnetMismatch(ip, subnet)
-        if ip == own_ip:
-            raise WanIpIsFirewallInterface(ip)
+        # Firewall's own WAN IP is allowed (common single-IP deployments).
+        # Any actual conflict on this IP is caught by the port-conflict check
+        # below — e.g. GlobalProtect already using 443.
         u = usage.get(ip)
         if u:
             blockers = _blocking_rules(u)
