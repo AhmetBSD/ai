@@ -8,23 +8,29 @@ This skill lets you manage **DNAT (port forwarding)** and **security policy sour
 
 ## 1. Install (One Command, One Time)
 
-In a terminal:
+### macOS / Linux (bash)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AhmetBSD/ai/main/skills/palo-alto/install.sh | bash
 ```
 
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/AhmetBSD/ai/main/skills/palo-alto/install.ps1 | iex
+```
+
 The installer:
-- Clones the skill repository to `~/.local/share/ai-skills/`
-- Symlinks the skill into Claude's discovery path: `~/.claude/skills/palo-alto/`
+- Clones the skill repository (macOS/Linux: `~/.local/share/ai-skills/`; Windows: `%LOCALAPPDATA%\ai-skills\`)
+- Symlinks (junction on Windows) the skill into Claude's discovery path (`~/.claude/skills/palo-alto/`)
 - Creates a Python virtual environment and installs `pan-os-python`
 
 You're ready when you see `DONE` at the end.
 
 Prerequisites (expected to already be present):
-- macOS or Linux
-- `git`
-- Python 3.10 or newer (recommended: 3.13)
+- macOS, Linux, or Windows 10+
+- `git` (Windows: Git for Windows from https://git-scm.com/download/win)
+- Python 3.10 or newer, recommended 3.13 (Windows: https://www.python.org/downloads/, "Add to PATH" enabled)
 - Claude Code installed (claude.ai/code)
 
 ---

@@ -21,7 +21,7 @@ ai/
 |-------|--------------|------|
 | [`skills/palo-alto`](skills/palo-alto/) | DNAT (port forwarding) and security-policy source restriction on PAN-OS firewalls, driven by plain-language sentences. | [Install + user guide](skills/palo-alto/GUIDE.md) · [Internal SKILL.md](skills/palo-alto/SKILL.md) |
 
-Each skill has its own `install.sh` for one-line customer setup; see the linked guide.
+Each skill has its own one-line installer (bash for macOS/Linux, PowerShell for Windows). See the linked guide for details.
 
 ## License
 

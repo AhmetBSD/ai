@@ -37,17 +37,33 @@ Eğer henüz bilinmiyorsa, müşteriden iste:
 Müşteri aynı sohbette daha önce verdiyse aynı bilgileri kullan — yeniden sorma.
 
 ### Adım 2 — Bağlantı kurulumu (ilk kullanımda)
+
+macOS/Linux:
 ```bash
 bash ~/.claude/skills/palo-alto/scripts/setup.sh
 ```
-Bu sadece Python venv + `pan-os-python` kurar. Credential sormaz, hiçbir şey saklamaz.
+
+Windows (PowerShell):
+```powershell
+powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.claude\skills\palo-alto\scripts\setup.ps1"
+```
+
+Her iki platformda da sadece Python venv + `pan-os-python` kurar. Credential sormaz, hiçbir şey saklamaz.
 
 ### Adım 3 — İsteğe göre script çağrısı
+
+Komutu çalıştırırken sadece **işletim sistemine göre python yolu** ve **env var söz dizimi** değişir; argümanlar ve script aynıdır.
+
+| Platform | Python yolu | Env var söz dizimi (örnek) |
+|----------|-------------|---------------------------|
+| macOS / Linux | `~/.palo-alto/venv/bin/python` | `KEY=value cmd` (tek satır) |
+| Windows (PowerShell) | `$env:USERPROFILE\.palo-alto\venv\Scripts\python.exe` | `$env:KEY='value'` (önceki satırda) |
 
 **DNAT — müşteri spesifik WAN IP söylediyse:**
 
 > "198.51.100.108'in 80 portu 192.168.1.50:90'a yönlendir"
 
+macOS/Linux:
 ```bash
 PANOS_HOST=10.0.0.1 \
 PANOS_USERNAME=admin \
@@ -58,6 +74,18 @@ PANOS_INSECURE=1 \
   --public-port 80 \
   --target-ip 192.168.1.50 \
   --target-port 90
+```
+
+Windows (PowerShell):
+```powershell
+$env:PANOS_HOST='10.0.0.1'
+$env:PANOS_USERNAME='admin'
+$env:PANOS_PASSWORD='MyPass123'
+$env:PANOS_INSECURE='1'
+& "$env:USERPROFILE\.palo-alto\venv\Scripts\python.exe" `
+  "$env:USERPROFILE\.claude\skills\palo-alto\scripts\dnat.py" `
+  --wan-ip 198.51.100.108 --public-port 80 `
+  --target-ip 192.168.1.50 --target-port 90
 ```
 
 **DNAT — müşteri "boş bir IP bul" dediyse:**
