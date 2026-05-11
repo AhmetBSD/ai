@@ -32,6 +32,25 @@ from config import Config
 log = logging.getLogger("panos_client")
 
 
+# Marker prepended to the `description` of every object/rule the skill creates.
+# Used by --remove to safely auto-clean ONLY objects this skill owns; objects
+# created manually by the operator are never touched.
+SKILL_TAG = "[skill-managed]"
+
+
+def _tag_description(desc: str) -> str:
+    """Prepend the skill marker; idempotent."""
+    desc = (desc or "").strip()
+    if desc.startswith(SKILL_TAG):
+        return desc
+    return f"{SKILL_TAG} {desc}".strip()
+
+
+def _is_skill_managed(obj) -> bool:
+    d = getattr(obj, "description", None) or ""
+    return d.startswith(SKILL_TAG)
+
+
 class PanosError(Exception):
     """Predictable client-side errors (conflict, validation, etc.)."""
 
@@ -139,7 +158,7 @@ class PanosClient:
             )
             return existing_by_value
 
-        obj = AddressObject(name=name, value=value, type="ip-netmask", description=description)
+        obj = AddressObject(name=name, value=value, type="ip-netmask", description=_tag_description(description))
         self.fw.add(obj)
         obj.create()
         self._created.append(obj)
@@ -205,7 +224,7 @@ class PanosClient:
                     f"{existing_members}, requested {members_sorted}"
                 )
             return existing
-        grp = AddressGroup(name=name, static_value=members_sorted, description=description)
+        grp = AddressGroup(name=name, static_value=members_sorted, description=_tag_description(description))
         self.fw.add(grp)
         grp.create()
         self._created.append(grp)
@@ -273,7 +292,7 @@ class PanosClient:
 
         rule = NatRule(
             name=name,
-            description=description or None,
+            description=_tag_description(description),
             fromzone=list(from_zones),
             tozone=to_zone,
             to_interface=to_interface,
@@ -366,7 +385,7 @@ class PanosClient:
 
         kwargs = dict(
             name=name,
-            description=description or None,
+            description=_tag_description(description),
             fromzone=list(from_zones),
             tozone=list(to_zones),
             source=list(source),
@@ -399,6 +418,85 @@ class PanosClient:
         rule.source = list(new_source)
         rule.apply()
         log.info("updated security rule %s source -> %s", rule.name, list(new_source))
+
+    # ---- Orphan / GC ---------------------------------------------------------
+
+    def count_references(self, name: str) -> int:
+        """How many remaining rules / groups reference this object by name.
+        Walks NAT rules, security rules, address groups and service groups.
+        """
+        self._require_refreshed()
+        n = 0
+        for r in self.rulebase.findall(NatRule):
+            if name in _as_list(r.source): n += 1
+            if name in _as_list(r.destination): n += 1
+            if name in _as_list(r.service): n += 1
+            if r.destination_translated_address == name: n += 1
+            if getattr(r, "source_translation_ip_address", None) == name: n += 1
+            sta = getattr(r, "source_translation_translated_addresses", None)
+            if sta and name in _as_list(sta): n += 1
+        for r in self.rulebase.findall(SecurityRule):
+            if name in _as_list(r.source): n += 1
+            if name in _as_list(r.destination): n += 1
+            if name in _as_list(r.service): n += 1
+        for g in self.fw.findall(AddressGroup):
+            if g.static_value and name in g.static_value: n += 1
+        try:
+            from panos.objects import ServiceGroup
+            for g in self.fw.findall(ServiceGroup):
+                if g.value and name in g.value: n += 1
+        except ImportError:
+            pass
+        return n
+
+    def cleanup_orphan_managed(self, candidate_names: Iterable[str]) -> dict:
+        """For each candidate name, delete the object iff:
+          (a) it carries the SKILL_TAG marker in description, AND
+          (b) no remaining rule/group references it.
+        AddressGroup members are recursed into.
+
+        Returns a dict {deleted: [...], skipped: [(name, reason), ...]}.
+        """
+        self._require_refreshed()
+        deleted: list[str] = []
+        skipped: list[tuple] = []
+        seen: set = set()
+
+        def _try_delete(name: str) -> None:
+            if name in seen or name in ("any", "application-default"):
+                return
+            seen.add(name)
+            # Identify type
+            ao = self.fw.find(name, AddressObject)
+            so = self.fw.find(name, ServiceObject)
+            ag = self.fw.find(name, AddressGroup)
+            obj = ao or so or ag
+            if obj is None:
+                skipped.append((name, "not-found"))
+                return
+            if not _is_skill_managed(obj):
+                skipped.append((name, "not-skill-managed"))
+                return
+            n = self.count_references(name)
+            if n > 0:
+                skipped.append((name, f"used-by-{n}-other-refs"))
+                return
+            # Recurse into address-group members before deleting the group
+            if ag is not None and ag.static_value:
+                members = list(ag.static_value)
+                obj.delete()
+                deleted.append(name)
+                log.info("deleted orphan address-group %s", name)
+                for member in members:
+                    _try_delete(member)
+                return
+            obj.delete()
+            deleted.append(name)
+            log.info("deleted orphan %s", name)
+
+        for n in candidate_names:
+            _try_delete(n)
+        return {"deleted": deleted, "skipped": skipped}
 
     # ---- Commit / revert -----------------------------------------------------
 

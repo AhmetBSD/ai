@@ -220,22 +220,53 @@ def do_remove(args: argparse.Namespace) -> dict:
     nat = client.get_nat_rule(target)
     if not nat:
         return {"host": cfg.host, "rule": target, "status": "not-found"}
+
     sec_prefix = cfg.naming.security_rule_template.split("{")[0]
     nat_prefix = cfg.naming.nat_rule_template.split("{")[0]
     sec_name = target.replace(nat_prefix, sec_prefix, 1) if nat_prefix != sec_prefix else None
-    sec_deleted = False
     sec = client.get_security_rule(sec_name) if sec_name and sec_name != target else None
+
+    # Collect candidate-orphan object names from the rules we are about to
+    # delete. Skill marker + zero-reference check happens AFTER deletion.
+    from panos_client import _as_list as _al
+    candidate_names: set = set()
+    for v in (_al(nat.source) + _al(nat.destination) + _al(nat.service)
+              + [nat.destination_translated_address,
+                 getattr(nat, "source_translation_ip_address", None)]
+              + _al(getattr(nat, "source_translation_translated_addresses", None))):
+        if v: candidate_names.add(v)
     if sec:
-        sec.delete()
-        sec_deleted = True
+        candidate_names.update(_al(sec.source))
+        candidate_names.update(_al(sec.destination))
+        candidate_names.update(_al(sec.service))
+    candidate_names.discard("any"); candidate_names.discard("application-default")
+
+    sec_deleted = False
+    if sec:
+        sec.delete(); sec_deleted = True
     nat.delete()
+
+    # Now that NAT + SEC are removed from the in-memory tree, the orphan
+    # scan counts references in the remaining rules ONLY.
+    cleanup = client.cleanup_orphan_managed(candidate_names)
+
     if args.dry_run:
-        return {"status": "would-remove", "nat": target, "security": sec_name if sec_deleted else None}
-    commit_result = client.commit(description=f"remove dnat {target}")
+        return {
+            "status": "would-remove",
+            "nat": target,
+            "security": sec_name if sec_deleted else None,
+            "orphan_candidates": sorted(candidate_names),
+            "would_delete": cleanup["deleted"],
+            "would_skip":   cleanup["skipped"],
+        }
+
+    commit_result = client.commit(description=f"remove dnat {target} + GC")
     out = {
         "host": cfg.host,
         "nat_rule": target,
         "security_rule": sec_name if sec_deleted else None,
+        "deleted_orphans": cleanup["deleted"],
+        "kept_objects":    cleanup["skipped"],
     }
     if isinstance(commit_result, dict) and commit_result.get("result") == "committing":
         out["status"] = "removing"
