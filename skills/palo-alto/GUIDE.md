@@ -89,11 +89,13 @@ The skill:
 
 Geographic restriction: passes `--source-region TR`.
 
-### 3.5 Remove an existing rule
+### 3.5 Remove an existing rule (with auto-cleanup)
 
 > "Remove RULE108"
 
-The NAT rule and its matching security rule are removed together.
+The NAT rule, its matching security rule, **and any address/service objects the skill itself created for that rule** are removed together — provided they are not referenced by any other rule. Objects the operator created by hand are never touched (the skill identifies its own objects via a `[skill-managed]` marker in the description field).
+
+The JSON response lists `deleted_orphans` (what was cleaned up) and `kept_objects` (what was kept and why — e.g. `not-skill-managed`, `used-by-3-other-refs`). AddressGroup members are recursed into, so `SRC-RULE_X` groups + their `SRC_a-b-c-d` members are removed together.
 
 ### 3.6 Preview free IPs/ports
 
@@ -141,6 +143,7 @@ bash ~/.claude/skills/palo-alto/scripts/update.sh --force
 | TLS verification | Self-signed certs are accepted (typical for firewall mgmt). You can pin a CA via `PANOS_CA_BUNDLE`. |
 | Log files | Skill writes no log files. JSON output goes only to stdout for Claude to consume. |
 | Outbound traffic | HTTPS only, to the mgmt IP you provided. Nothing else. |
+| Object ownership | Every object the skill creates is tagged with `[skill-managed]` in its description. Only tagged + zero-reference objects can be auto-cleaned. Operator-created objects are never touched. |
 
 ---
 

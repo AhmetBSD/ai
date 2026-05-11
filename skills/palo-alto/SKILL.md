@@ -143,6 +143,22 @@ Müşteri "198.51.100.99'un 80 portu ..." dediğinde skill ŞU sırayla kontrol 
 4. **Aynı isimde NAT/security rule farklı parametre ile var mı?** Evet ise → `object_conflict` (üzerine YAZILMAZ).
 5. **Aynı isimde, aynı parametre ile var mı?** → No-op (idempotent, tekrar çalıştırma güvenli).
 
+## Kural Silme (`--remove`) ve Otomatik GC
+
+Bir kuralı sildiğinde (`dnat.py --remove RULExxx` veya doğal dil "RULExxx'i sil"):
+
+1. NAT rule silinir.
+2. Naming convention'la eşleşen security rule (`RULE_xxx` → `RULExxx`) silinir.
+3. **Otomatik orphan cleanup:** İki kuralın referans verdiği address/service objeleri taranır. Bir obje SİLİNİR ancak şu şartlarda:
+   - Description'ında `[skill-managed]` marker'ı taşıyor (yani skill'in kendisi yaratmış), VE
+   - Hiçbir başka NAT/security rule veya group bu objeyi kullanmıyor.
+4. Address-group içindeki üyeler recursive olarak temizlenir (`SRC-RULE_X` group + üye `SRC_a-b-c-d`'ler bir arada gider).
+5. Tüm değişiklikler tek commit ile uygulanır.
+
+JSON sonucu `deleted_orphans` (silindi) ve `kept_objects` (`name`, `reason`) listelerini içerir. `reason` örnekleri: `not-skill-managed` (operatörün manuel yarattığı), `used-by-N-other-refs` (başka kural kullanıyor).
+
+**Mantık:** Skill'in kendi izi olan `[skill-managed]` marker'ı sayesinde operatörün manuel yarattığı objelere ASLA dokunulmaz. Tek müdahale alanı skill'in kendi yarattığı çöplerdir.
+
 ## Mimari Kararlar
 
 1. **Credential persistence YOK** — env var üzerinden geçer, process exit'te kaybolur. Şifre asla diske yazılmaz.
@@ -152,6 +168,7 @@ Müşteri "198.51.100.99'un 80 portu ..." dediğinde skill ŞU sırayla kontrol 
 5. **Direct apply + commit** — başarısızlıkta PAN-OS candidate'ı otomatik geri alır.
 6. **Naming convention Otoplan paterni** — WAN_IF108, SERVER_50, SVC_80_TCP, RULE108, RULE_108. Override `PANOS_*` env var'ları ile mümkün (zone/interface).
 7. **Default security profile** — yeni security rule'a `virus=default, spyware=strict, vulnerability=strict, wildfire-analysis=default` uygulanır (Otoplan default'u).
+8. **`[skill-managed]` marker'ı** — yaratılan her address/service/group/NAT/security objesinin `description` alanına eklenir. `--remove`'un otomatik orphan cleanup'ı sadece bu marker'ı taşıyan + zero-reference objeleri siler; operatörün elle yarattığı her şey korunur.
 
 ## Dosya İndeksi
 

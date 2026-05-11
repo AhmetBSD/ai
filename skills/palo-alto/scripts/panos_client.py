@@ -202,7 +202,8 @@ class PanosClient:
             log.info("reusing service %s for %s/%d", existing_by_port.name, proto, port)
             return existing_by_port
 
-        obj = ServiceObject(name=name, protocol=proto, destination_port=str(port))
+        obj = ServiceObject(name=name, protocol=proto, destination_port=str(port),
+                            description=_tag_description(""))
         self.fw.add(obj)
         obj.create()
         self._created.append(obj)
