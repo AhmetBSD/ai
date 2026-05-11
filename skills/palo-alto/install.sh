@@ -56,5 +56,10 @@ bash "$TARGET/scripts/setup.sh"
 
 echo
 echo "[install] DONE."
-echo "Skill is registered with Claude Code. Open Claude and type a natural-language request, e.g.:"
-echo "  \"Firewall 10.0.0.1, admin/MyPass. 198.51.100.108'in 80 portu 192.168.1.50:90'a yönlendir\""
+echo
+echo "Sıradaki tek adım — bir kerelik kimlik girişi:"
+echo "  ~/.palo-alto/venv/bin/python ~/.claude/skills/palo-alto/scripts/auth.py"
+echo
+echo "Komut firewall host'unu, kullanıcı adını ve şifreyi soracak (şifre ekranda görünmez)."
+echo "Sonrasında Claude'a doğal cümle yazmak yeterli, ör:"
+echo "  \"198.51.100.108'in 80 portu 192.168.1.50:90'a yönlendir\""

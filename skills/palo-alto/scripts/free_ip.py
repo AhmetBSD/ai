@@ -12,7 +12,8 @@ import sys
 
 from config import load_config, ConfigError
 from discovery import build_wan_usage_map, get_wan_subnet, _firewall_own_wan_ip
-from panos_client import PanosClient, PanosError
+from panos_client import PanosClient, PanosError, AuthExpiredError
+from runtime import auto_update
 
 
 def main(argv=None) -> int:
@@ -21,6 +22,8 @@ def main(argv=None) -> int:
                    help="Only show IPs that have this port free")
     p.add_argument("--protocol", default="tcp", choices=["tcp", "udp"])
     args = p.parse_args(argv)
+
+    auto_update()
 
     try:
         cfg = load_config()
@@ -34,6 +37,9 @@ def main(argv=None) -> int:
         subnet = get_wan_subnet(client)
         own_ip = _firewall_own_wan_ip(client, subnet)
         usage = build_wan_usage_map(client, subnet)
+    except AuthExpiredError as e:
+        print(json.dumps({"status": "error", "kind": "auth_expired", "error": str(e)}, indent=2))
+        return 1
     except (PanosError, RuntimeError) as e:
         print(json.dumps({"status": "error", "error": str(e)}, indent=2))
         return 1

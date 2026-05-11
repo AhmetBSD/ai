@@ -25,7 +25,9 @@ from discovery import (
 )
 from panos_client import (
     PanosClient, PanosError, CommitError, ObjectConflictError, NotOwnedError,
+    AuthExpiredError,
 )
+from runtime import auto_update
 
 
 log = logging.getLogger("dnat")
@@ -408,6 +410,7 @@ def main(argv: Optional[list] = None) -> int:
         parser.error("--remove, --update, --keygen are mutually exclusive")
 
     _setup_logging(args.verbose)
+    auto_update()
 
     if args.keygen:
         try:
@@ -438,6 +441,9 @@ def main(argv: Optional[list] = None) -> int:
         except ConfigError as e:
             _emit({"status": "error", "error": str(e), "kind": "config"})
             return 2
+        except AuthExpiredError as e:
+            _emit({"status": "error", "kind": "auth_expired", "error": str(e)})
+            return 1
         except NotOwnedError as e:
             _emit({"status": "error", "kind": "not_owned",
                    "error": str(e), "object_kind": e.kind, "object_name": e.name, "action": e.action})
@@ -462,6 +468,9 @@ def main(argv: Optional[list] = None) -> int:
         except ConfigError as e:
             _emit({"status": "error", "error": str(e), "kind": "config"})
             return 2
+        except AuthExpiredError as e:
+            _emit({"status": "error", "kind": "auth_expired", "error": str(e)})
+            return 1
         except NotOwnedError as e:
             _emit({"status": "error", "kind": "not_owned",
                    "error": str(e), "object_kind": e.kind, "object_name": e.name, "action": e.action})
@@ -501,6 +510,9 @@ def main(argv: Optional[list] = None) -> int:
             "wan_ip": e.ip, "protocol": e.proto, "port": e.port,
             "conflicting_rules": e.rules,
         })
+        return 1
+    except AuthExpiredError as e:
+        _emit({"status": "error", "kind": "auth_expired", "error": str(e)})
         return 1
     except NotOwnedError as e:
         _emit({"status": "error", "kind": "not_owned",

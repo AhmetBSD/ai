@@ -23,7 +23,9 @@ from typing import Optional
 from config import load_config, ConfigError
 from panos_client import (
     PanosClient, PanosError, CommitError, ObjectConflictError, NotOwnedError,
+    AuthExpiredError,
 )
+from runtime import auto_update
 
 
 log = logging.getLogger("restrict_source")
@@ -264,12 +266,16 @@ def main(argv: Optional[list] = None) -> int:
         parser.error("--rule and --match-dest are mutually exclusive")
 
     _setup_logging(args.verbose)
+    auto_update()
 
     try:
         result = do_restrict(args)
     except ConfigError as e:
         _emit({"status": "error", "kind": "config", "error": str(e)})
         return 2
+    except AuthExpiredError as e:
+        _emit({"status": "error", "kind": "auth_expired", "error": str(e)})
+        return 1
     except NotOwnedError as e:
         _emit({"status": "error", "kind": "not_owned",
                "error": str(e), "object_kind": e.kind, "object_name": e.name, "action": e.action})

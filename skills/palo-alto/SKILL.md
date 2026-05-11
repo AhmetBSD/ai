@@ -18,15 +18,11 @@ PAN-OS firewall'una **doğrudan** Claude Code üzerinden iş yaptırır. Müşte
 
 Claude bu skill'i kullanırken şu adımları takip eder:
 
-### Adım 0 — Auto-update (zorunlu, her çağrı öncesi)
+### Adım 0 — Auto-update (otomatik)
 
-Her DNAT/restrict/free_ip çağrısından ÖNCE şu komutu çalıştır:
+`dnat.py`, `restrict_source.py` ve `free_ip.py` `main()`'ları başlangıçta `runtime.auto_update()` çağırır; bu da `update.sh`'i best-effort olarak fork eder (24h cache, network hatası silent skip, timeout 15s). Skill her zaman en güncel commit ile çalışır, Claude'un ek bir şey yapması gerekmez.
 
-```bash
-bash ~/.claude/skills/palo-alto/scripts/update.sh
-```
-
-24 saat cache var, çoğu sefer no-op çıkar. Network hatası varsa silent skip eder. Yeni versiyon varsa fast-forward pull yapılır, sonraki adımlar güncel kodla çalışır.
+Devre dışı bırakmak istersen (test ortamı): `export PALO_ALTO_SKIP_AUTO_UPDATE=1`.
 
 ### Adım 1 — Firewall bilgilerini topla
 Eğer henüz bilinmiyorsa, müşteriden iste:
@@ -128,6 +124,7 @@ Tüm script'ler stdout'a JSON döner. Hata yoksa `"status": "applied"`, hata var
 | `port_conflict` | İstenen port o IP'de zaten kullanımda | JSON'daki `conflicting_rules` listesini göster: "Bu port o IP'de zaten kullanılıyor (kural: ...). Farklı bir IP veya port seç." |
 | `object_conflict` | Aynı isimde farklı parametreli kural mevcut | Farkı göster, manuel rename öner |
 | `not_owned` | Skill, operatörün yarattığı bir kuralı/objeyi silmeye veya source'unu değiştirmeye çalıştı | JSON'daki `object_kind` + `object_name` + `action` field'larını kullan: "Bu kural senin firewall'unda zaten var ve skill tarafından yaratılmadığı için silinemez/değiştirilemez. Sadece destination'unu güncellemek istersen `--update` ile yapabilirim." |
+| `auth_expired` | API key süresi dolmuş veya PA kimliği reddetti | "PA kimlik bilgisini reddetti — büyük olasılıkla API key'in süresi dolmuş. `auth.py` çalıştırıp host/kullanıcı/şifreyi tekrar gir, skill yeni key alacak." |
 | `commit` | Commit hatası | Firewall'un dönen mesajını göster (validation hatası vb.) |
 | `panos` | Genel PAN-OS API hatası | Hata mesajını ham hâliyle göster |
 
