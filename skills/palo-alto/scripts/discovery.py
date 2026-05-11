@@ -299,11 +299,16 @@ def find_dnat_wan_candidate(
                     )
                 raise PortConflict(ip, proto, requested_port, blockers, detail=detail)
         name = u.address_object if u else None
+        # If this IP already hosts other NAT rules, future rules MUST use a
+        # unique name — fall through to port-multiplex naming (RULE{octet}-{P}).
+        # Otherwise the caller's predicted RULE{octet} can collide with an
+        # unrelated existing rule on the same IP (common on multi-service IPs).
+        reason = "port-multiplex" if (u and u.nat_rules) else "explicit"
         return WanCandidate(
             ip=ip,
             address_object_name=name or client.config.naming.wan_address(ip),
             address_object_exists=bool(name),
-            reason="explicit",
+            reason=reason,
         )
 
     # Auto-pick: phase 1 — fully-free
