@@ -19,7 +19,7 @@ ai/
 
 | Skill | What it does | Docs |
 |-------|--------------|------|
-| [`skills/palo-alto`](skills/palo-alto/) | DNAT (port forwarding) and security-policy source restriction on PAN-OS firewalls, driven by plain-language sentences. Tracks every object it creates with a `[skill-managed]` marker so `--remove` auto-cleans the orphans without ever touching operator-created objects. | [Install + user guide](skills/palo-alto/GUIDE.md) · [Internal SKILL.md](skills/palo-alto/SKILL.md) |
+| [`skills/palo-alto`](skills/palo-alto/) | DNAT, security-policy source restriction, and destination-only updates on PAN-OS firewalls, driven by plain-language sentences. Hard-isolated: every object the skill creates is tagged `[skill-managed]`; it can delete/modify only its own rules. The single write-side exception is `--update`, which can repoint **any** rule's inside destination without touching its identity. | [Install + user guide](skills/palo-alto/GUIDE.md) · [Internal SKILL.md](skills/palo-alto/SKILL.md) |
 
 Each skill has its own one-line installer (bash for macOS/Linux, PowerShell for Windows). See the linked guide for details.
 

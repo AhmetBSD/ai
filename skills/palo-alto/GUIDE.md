@@ -95,7 +95,23 @@ Geographic restriction: passes `--source-region TR`.
 
 The NAT rule, its matching security rule, **and any address/service objects the skill itself created for that rule** are removed together — provided they are not referenced by any other rule. Objects the operator created by hand are never touched (the skill identifies its own objects via a `[skill-managed]` marker in the description field).
 
+**Hard isolation:** `--remove` is **only allowed on rules the skill itself created**. Operator-created rules are refused with `kind: not_owned`. The same protection applies to source-IP restriction (`restrict_source.py`).
+
 The JSON response lists `deleted_orphans` (what was cleaned up) and `kept_objects` (what was kept and why — e.g. `not-skill-managed`, `used-by-3-other-refs`). AddressGroup members are recursed into, so `SRC-RULE_X` groups + their `SRC_a-b-c-d` members are removed together.
+
+### 3.6 Update the inside destination of an existing rule
+
+> "Repoint RULE100 to 10.0.10.222:9090"
+
+This is the **one write-side exception** to hard isolation: the skill can change `destination_translated_address` + `destination_translated_port` on **any** NAT rule, including operator-created ones. The rule's name, WAN side, zones, source filter, service object, and paired security policy stay exactly as the operator set them.
+
+```
+PANOS_HOST=... PANOS_USERNAME=... PANOS_PASSWORD=... PANOS_INSECURE=1 \
+  ~/.palo-alto/venv/bin/python ~/.claude/skills/palo-alto/scripts/dnat.py \
+  --update RULE100 --target-ip 10.0.10.222 --target-port 9090
+```
+
+The response's `rule_owned_by` field reads `skill` or `operator` so you know which path was taken. The previous destination address is auto-cleaned **only if it was skill-managed and now has no references** — operator-created objects are left alone.
 
 ### 3.6 Preview free IPs/ports
 

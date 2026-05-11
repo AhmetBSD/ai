@@ -127,6 +127,7 @@ Tüm script'ler stdout'a JSON döner. Hata yoksa `"status": "applied"`, hata var
 | `wan_subnet_mismatch` | Müşteri WAN subnet'i dışı IP verdi | JSON'daki `wan_subnet` field'ını kullan: "Verdiğin IP firewall'unun WAN subnet'i (X) içinde değil. Lütfen o aralıktan bir IP seç." |
 | `port_conflict` | İstenen port o IP'de zaten kullanımda | JSON'daki `conflicting_rules` listesini göster: "Bu port o IP'de zaten kullanılıyor (kural: ...). Farklı bir IP veya port seç." |
 | `object_conflict` | Aynı isimde farklı parametreli kural mevcut | Farkı göster, manuel rename öner |
+| `not_owned` | Skill, operatörün yarattığı bir kuralı/objeyi silmeye veya source'unu değiştirmeye çalıştı | JSON'daki `object_kind` + `object_name` + `action` field'larını kullan: "Bu kural senin firewall'unda zaten var ve skill tarafından yaratılmadığı için silinemez/değiştirilemez. Sadece destination'unu güncellemek istersen `--update` ile yapabilirim." |
 | `commit` | Commit hatası | Firewall'un dönen mesajını göster (validation hatası vb.) |
 | `panos` | Genel PAN-OS API hatası | Hata mesajını ham hâliyle göster |
 
@@ -143,21 +144,43 @@ Müşteri "198.51.100.99'un 80 portu ..." dediğinde skill ŞU sırayla kontrol 
 4. **Aynı isimde NAT/security rule farklı parametre ile var mı?** Evet ise → `object_conflict` (üzerine YAZILMAZ).
 5. **Aynı isimde, aynı parametre ile var mı?** → No-op (idempotent, tekrar çalıştırma güvenli).
 
-## Kural Silme (`--remove`) ve Otomatik GC
+## Hard Isolation — Skill Yalnızca Kendi Yarattığı Kurallara Müdahale Eder
+
+Skill'in **yazma yetkisi** kasten dar:
+
+| İşlem | Kim üzerinde? |
+|-------|---------------|
+| Yeni NAT/security/address/service yaratma | Sadece kendi (her yarattığına `[skill-managed]` marker ekler) |
+| `--remove` (NAT + security + orphan address/service) | **YALNIZCA skill-managed kurallar.** Operatör kuralları `not_owned` ile reddedilir. |
+| `restrict_source.py` (security policy source güncelleme) | **YALNIZCA skill-managed kurallar.** |
+| `--update` (NAT rule destination IP/port değişimi) | **Skill-managed + operatör kuralları** — TEK istisna. |
+| Diğer her şey (zone, interface, VPN, audit log, vs.) | Yetki yok. |
+
+Marker kontrolü `description.startswith("[skill-managed]")` ile yapılır. Operatörün manuel yarattığı her şey skill'in dokunamayacağı alandadır. Discovery (`free_ip.py`, conflict scan) **read-only** olduğu için operatör config'ini okuyabilir, sadece yazma kapsamı kısıtlıdır.
+
+### `--remove` ve Otomatik GC
 
 Bir kuralı sildiğinde (`dnat.py --remove RULExxx` veya doğal dil "RULExxx'i sil"):
 
-1. NAT rule silinir.
-2. Naming convention'la eşleşen security rule (`RULE_xxx` → `RULExxx`) silinir.
+1. NAT rule skill-managed mi? Değilse `not_owned` ile reddedilir.
+2. Naming convention'la eşleşen security rule (`RULE_xxx`) bulunur — skill-managed ise silinir; operatör'ünki ise dokunulmaz.
 3. **Otomatik orphan cleanup:** İki kuralın referans verdiği address/service objeleri taranır. Bir obje SİLİNİR ancak şu şartlarda:
-   - Description'ında `[skill-managed]` marker'ı taşıyor (yani skill'in kendisi yaratmış), VE
+   - Description'ında `[skill-managed]` marker'ı taşıyor, VE
    - Hiçbir başka NAT/security rule veya group bu objeyi kullanmıyor.
-4. Address-group içindeki üyeler recursive olarak temizlenir (`SRC-RULE_X` group + üye `SRC_a-b-c-d`'ler bir arada gider).
+4. Address-group içindeki üyeler recursive olarak temizlenir.
 5. Tüm değişiklikler tek commit ile uygulanır.
 
-JSON sonucu `deleted_orphans` (silindi) ve `kept_objects` (`name`, `reason`) listelerini içerir. `reason` örnekleri: `not-skill-managed` (operatörün manuel yarattığı), `used-by-N-other-refs` (başka kural kullanıyor).
+JSON sonucu `deleted_orphans` ve `kept_objects` (`name`, `reason`) listelerini içerir. `reason` örnekleri: `not-skill-managed`, `used-by-N-other-refs`.
 
-**Mantık:** Skill'in kendi izi olan `[skill-managed]` marker'ı sayesinde operatörün manuel yarattığı objelere ASLA dokunulmaz. Tek müdahale alanı skill'in kendi yarattığı çöplerdir.
+### `--update` — Mevcut Kuralın İç Hedefini Değiştir
+
+```
+dnat.py --update RULE100 --target-ip 10.0.10.222 --target-port 9090
+```
+
+`destination_translated_address` + `destination_translated_port` güncellenir. **Kuralın adı, WAN tarafı, zone'lar, source filter, service object, eşli security policy — hepsi olduğu gibi kalır.** Tek değişen iç hedef.
+
+Operatör kuralında çalıştığında skill yeni target address objesini `[skill-managed]` marker ile yaratır (gelecekteki GC için). Eski destination address skill-managed ve sıfır referans ise GC'ye girer; operatör objesi ise korunur. Yanıttaki `rule_owned_by: "skill"|"operator"` hangi yolu izlediğini gösterir.
 
 ## Mimari Kararlar
 
