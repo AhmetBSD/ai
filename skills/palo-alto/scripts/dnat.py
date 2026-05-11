@@ -1,0 +1,290 @@
+"""DNAT skill — destination NAT (port forwarding) entry point.
+
+Customer says: "198.51.100.108'in 80 portunu 192.168.1.50:90'a yönlendir"
+Claude parses the sentence and invokes:
+
+    PANOS_HOST=...  PANOS_USERNAME=... PANOS_PASSWORD=...  PANOS_INSECURE=1 \\
+    python3 dnat.py --wan-ip 198.51.100.108 --public-port 80 \\
+                    --target-ip 192.168.1.50 --target-port 90
+
+Credentials live only in env vars for the duration of this process.
+"""
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import logging
+import sys
+from typing import Optional
+
+from config import load_config, ConfigError
+from discovery import (
+    find_dnat_wan_candidate,
+    WanSubnetMismatch, WanIpIsFirewallInterface, PortConflict,
+)
+from panos_client import (
+    PanosClient, PanosError, CommitError, ObjectConflictError,
+)
+
+
+log = logging.getLogger("dnat")
+
+
+def _setup_logging(verbose: bool) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+        stream=sys.stderr,  # keep stdout clean for JSON output
+    )
+    if not verbose:
+        logging.getLogger("pandevice").setLevel(logging.WARNING)
+        logging.getLogger("panos").setLevel(logging.WARNING)
+
+
+def _validate_args(args: argparse.Namespace) -> None:
+    if args.remove:
+        return
+    if not (1 <= args.public_port <= 65535):
+        raise SystemExit(f"--public-port out of range: {args.public_port}")
+    if not (1 <= args.target_port <= 65535):
+        raise SystemExit(f"--target-port out of range: {args.target_port}")
+    if args.protocol not in ("tcp", "udp"):
+        raise SystemExit(f"--protocol must be tcp or udp")
+    try:
+        ipaddress.IPv4Address(args.target_ip)
+    except (ValueError, TypeError):
+        raise SystemExit(f"--target-ip not a valid IPv4: {args.target_ip!r}")
+    if args.wan_ip:
+        try:
+            ipaddress.IPv4Address(args.wan_ip)
+        except (ValueError, TypeError):
+            raise SystemExit(f"--wan-ip not a valid IPv4: {args.wan_ip!r}")
+
+
+def do_dnat(args: argparse.Namespace) -> dict:
+    cfg = load_config()
+    client = PanosClient(cfg)
+    client.refresh()
+
+    candidate = find_dnat_wan_candidate(
+        client,
+        requested_port=args.public_port,
+        protocol=args.protocol,
+        explicit_wan_ip=args.wan_ip,
+    )
+    log.info(
+        "WAN candidate: %s (%s) — address-obj=%s exists=%s",
+        candidate.ip, candidate.reason, candidate.address_object_name,
+        candidate.address_object_exists,
+    )
+
+    wan_addr_name = candidate.address_object_name
+    lan_addr_name = cfg.naming.lan_address(args.target_ip)
+    service_name = cfg.naming.service(args.public_port, args.protocol)
+
+    suffix = ""
+    if candidate.reason == "port-multiplex":
+        suffix = f"{args.protocol.upper()}{args.public_port}"
+    nat_rule_name = cfg.naming.nat_rule(candidate.ip, suffix=suffix)
+    sec_rule_name = cfg.naming.security_rule(candidate.ip, suffix=suffix)
+
+    plan = {
+        "host": cfg.host,
+        "wan_ip": candidate.ip,
+        "wan_address_object": wan_addr_name,
+        "target_ip": args.target_ip,
+        "target_address_object": lan_addr_name,
+        "service_object": service_name,
+        "protocol": args.protocol,
+        "public_port": args.public_port,
+        "target_port": args.target_port,
+        "nat_rule": nat_rule_name,
+        "security_rule": sec_rule_name,
+        "from_zones": [cfg.wan_zone],
+        "to_zone_nat": cfg.wan_zone,
+        "to_zone_security": cfg.lan_zone,
+        "to_interface": cfg.wan_interface,
+        "selection_reason": candidate.reason,
+    }
+
+    if args.dry_run:
+        plan["dry_run"] = True
+        plan["status"] = "would-apply"
+        return plan
+
+    try:
+        client.ensure_address(
+            name=wan_addr_name,
+            value=f"{candidate.ip}/32",
+            description=f"WAN host {candidate.ip}",
+        )
+        client.ensure_address(
+            name=lan_addr_name,
+            value=f"{args.target_ip}/32",
+            description=args.description or f"Internal host {args.target_ip}",
+        )
+        client.ensure_service(
+            name=service_name,
+            protocol=args.protocol,
+            port=args.public_port,
+        )
+        client.ensure_nat_rule_dnat(
+            name=nat_rule_name,
+            wan_address_name=wan_addr_name,
+            service_name=service_name,
+            translated_address_name=lan_addr_name,
+            translated_port=args.target_port,
+            from_zones=[cfg.wan_zone],
+            to_zone=cfg.wan_zone,
+            to_interface=cfg.wan_interface,
+            description=args.description or "",
+        )
+        client.ensure_security_rule(
+            name=sec_rule_name,
+            from_zones=[cfg.wan_zone],
+            to_zones=[cfg.lan_zone],
+            source=["any"],
+            destination=[wan_addr_name],
+            service=[service_name],
+            application=["any"],
+            action="allow",
+            description=args.description or "",
+            log_end=True,
+            profile_setting=cfg.security_profiles,
+            profile_group=cfg.security_profile_group or None,
+        )
+    except (ObjectConflictError, PanosError):
+        log.error("object create failed, reverting candidate")
+        try:
+            client.revert_candidate()
+        except Exception as e:
+            log.error("revert failed: %s", e)
+        raise
+
+    try:
+        commit_result = client.commit(
+            description=args.description or
+            f"dnat {candidate.ip}:{args.public_port} -> {args.target_ip}:{args.target_port}"
+        )
+    except CommitError:
+        raise
+
+    plan["status"] = "applied"
+    plan["commit_job"] = commit_result.get("jobid") if isinstance(commit_result, dict) else None
+    return plan
+
+
+def do_remove(args: argparse.Namespace) -> dict:
+    cfg = load_config()
+    client = PanosClient(cfg)
+    client.refresh()
+    target = args.remove
+    nat = client.get_nat_rule(target)
+    if not nat:
+        return {"host": cfg.host, "rule": target, "status": "not-found"}
+    sec_prefix = cfg.naming.security_rule_template.split("{")[0]
+    nat_prefix = cfg.naming.nat_rule_template.split("{")[0]
+    sec_name = target.replace(nat_prefix, sec_prefix, 1) if nat_prefix != sec_prefix else None
+    sec_deleted = False
+    sec = client.get_security_rule(sec_name) if sec_name and sec_name != target else None
+    if sec:
+        sec.delete()
+        sec_deleted = True
+    nat.delete()
+    if args.dry_run:
+        return {"status": "would-remove", "nat": target, "security": sec_name if sec_deleted else None}
+    commit_result = client.commit(description=f"remove dnat {target}")
+    return {
+        "host": cfg.host,
+        "status": "removed",
+        "nat_rule": target,
+        "security_rule": sec_name if sec_deleted else None,
+        "commit_job": commit_result.get("jobid") if isinstance(commit_result, dict) else None,
+    }
+
+
+def main(argv: Optional[list] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Create or remove a DNAT (port forwarding) on PAN-OS."
+    )
+    parser.add_argument("--public-port", type=int,
+                        help="External port number (1-65535)")
+    parser.add_argument("--target-ip",
+                        help="Inside server IPv4 to receive traffic")
+    parser.add_argument("--target-port", type=int,
+                        help="Inside server port (1-65535)")
+    parser.add_argument("--wan-ip", default=None,
+                        help="Specific WAN IPv4 to use (default: auto-pick free)")
+    parser.add_argument("--protocol", default="tcp", choices=["tcp", "udp"])
+    parser.add_argument("--description", default="",
+                        help="Free-text description for objects/rules")
+    parser.add_argument("--remove", default=None,
+                        help="Remove this NAT rule (and matching security rule) instead")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print plan, do not change firewall")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+
+    _setup_logging(args.verbose)
+
+    if args.remove:
+        try:
+            result = do_remove(args)
+        except ConfigError as e:
+            _emit({"status": "error", "error": str(e), "kind": "config"})
+            return 2
+        except (PanosError, RuntimeError) as e:
+            _emit({"status": "error", "error": str(e), "kind": "panos"})
+            return 1
+        _emit(result)
+        return 0 if result.get("status") in ("removed", "would-remove") else 1
+
+    if not (args.public_port and args.target_ip and args.target_port):
+        parser.error("--public-port, --target-ip, --target-port required (or use --remove)")
+    _validate_args(args)
+
+    try:
+        result = do_dnat(args)
+    except ConfigError as e:
+        _emit({"status": "error", "error": str(e), "kind": "config"})
+        return 2
+    except WanSubnetMismatch as e:
+        _emit({
+            "status": "error", "kind": "wan_subnet_mismatch",
+            "error": str(e),
+            "given_ip": e.ip, "wan_subnet": str(e.subnet),
+        })
+        return 1
+    except WanIpIsFirewallInterface as e:
+        _emit({"status": "error", "kind": "wan_ip_is_firewall", "error": str(e), "given_ip": e.ip})
+        return 1
+    except PortConflict as e:
+        _emit({
+            "status": "error", "kind": "port_conflict",
+            "error": str(e),
+            "wan_ip": e.ip, "protocol": e.proto, "port": e.port,
+            "conflicting_rules": e.rules,
+        })
+        return 1
+    except ObjectConflictError as e:
+        _emit({"status": "error", "kind": "object_conflict", "error": str(e)})
+        return 1
+    except CommitError as e:
+        _emit({"status": "error", "kind": "commit", "error": str(e)})
+        return 1
+    except (PanosError, RuntimeError) as e:
+        _emit({"status": "error", "kind": "panos", "error": str(e)})
+        return 1
+    _emit(result)
+    return 0
+
+
+def _emit(obj: dict) -> None:
+    json.dump(obj, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

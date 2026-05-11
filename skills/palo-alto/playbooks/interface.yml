@@ -1,0 +1,33 @@
+---
+# L3 ethernet interface
+# Usage: -e "iface=ethernet1/1 ip=10.0.0.1/24 zone=trust vr=default"
+- name: PAN-OS L3 ethernet interface
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - paloaltonetworks.panos
+
+  vars:
+    state: present
+    mode: layer3              # layer3 | layer2 | virtual-wire | tap
+    enable_dhcp: false
+    management_profile: ""
+    mtu: 1500
+    comment: ""
+
+  tasks:
+    - name: "{{ state | capitalize }} interface {{ iface }}"
+      paloaltonetworks.panos.panos_interface:
+        provider: "{{ panos_provider }}"
+        if_name: "{{ iface }}"
+        mode: "{{ mode }}"
+        ip: "{{ [ip] if ip is defined and ip != '' else [] }}"
+        enable_dhcp: "{{ enable_dhcp }}"
+        zone_name: "{{ zone | default(omit) }}"
+        vr_name: "{{ vr | default('default') }}"
+        management_profile: "{{ management_profile | default(omit) }}"
+        mtu: "{{ mtu }}"
+        comment: "{{ comment }}"
+        state: "{{ state }}"
+        commit: false

@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+
+# Virtualenv (customer-side install)
+.palo-alto-skill/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Secrets (defensive — skill itself never writes any of these)
+*.apikey
+*-creds.yml
+*.env
+.netrc

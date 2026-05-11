@@ -1,0 +1,24 @@
+---
+# Running config XML yedek
+# Usage: -e "output_path=/tmp/panos-backup.xml"
+- name: PAN-OS config backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - paloaltonetworks.panos
+
+  vars:
+    config_type: running       # running | candidate
+
+  tasks:
+    - name: Fetch {{ config_type }} config
+      paloaltonetworks.panos.panos_export:
+        provider: "{{ panos_provider }}"
+        category: configuration
+        filename: "{{ output_path }}"
+      register: export_result
+
+    - name: Show backup path
+      ansible.builtin.debug:
+        msg: "Config backed up to {{ output_path }} — size {{ export_result.stdout | default('?') }}"

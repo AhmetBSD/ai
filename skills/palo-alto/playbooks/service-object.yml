@@ -1,0 +1,27 @@
+---
+# Service object CRUD
+# Usage: -e "name=tcp-8080 protocol=tcp port=8080 [state=present]"
+- name: PAN-OS service object
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  collections:
+    - paloaltonetworks.panos
+
+  vars:
+    state: present
+    protocol: tcp     # tcp | udp | sctp
+    source_port: ""
+    description: ""
+
+  tasks:
+    - name: "{{ state | capitalize }} service object {{ name }}"
+      paloaltonetworks.panos.panos_service_object:
+        provider: "{{ panos_provider }}"
+        name: "{{ name }}"
+        protocol: "{{ protocol }}"
+        destination_port: "{{ port }}"
+        source_port: "{{ source_port | default(omit) }}"
+        description: "{{ description }}"
+        state: "{{ state }}"
+        commit: false
